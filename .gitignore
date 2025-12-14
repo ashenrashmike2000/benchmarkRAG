@@ -22,3 +22,5 @@ faiss_store/
 data/benchmark/
 results/
 
+.env
+
