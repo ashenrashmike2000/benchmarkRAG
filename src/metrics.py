@@ -32,3 +32,17 @@ def latency_percentiles(latencies):
         "p90": float(np.percentile(latencies, 90)),
         "p99": float(np.percentile(latencies, 99)),
     }
+def success_at_k(pred, gt, k):
+    return 1.0 if any(p in gt for p in pred[:k]) else 0.0
+
+
+def ndcg_at_k(pred, gt, k):
+    def dcg(items):
+        score = 0.0
+        for i, item in enumerate(items, start=1):
+            if item in gt:
+                score += 1.0 / math.log2(i + 1)
+        return score
+
+    ideal = dcg(list(gt)[:k])
+    return dcg(pred[:k]) / ideal if ideal > 0 else 0.0
