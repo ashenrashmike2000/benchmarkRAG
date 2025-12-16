@@ -48,3 +48,22 @@ def generate_metadata(n: int, categories=None, seed=42) -> List[Dict]:
         categories = ["A", "B", "C"]
 
     return [{"category": random.choice(categories)} for _ in range(n)]
+
+def load_numpy_vectors(path: str) -> np.ndarray:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"npy vectors file not found: {path}")
+    return np.load(path).astype("float32")
+
+def load_groundtruth_numpy(path: str) -> np.ndarray:
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"npy groundtruth file not found: {path}")
+    return np.load(path).astype("int32")
+
+def generate_metadata_for_corpus(n: int, field: str = "category", categories: List[str] = None, seed: int = 42) -> List[Dict]:
+    random.seed(seed)
+    if categories is None:
+        categories = ["A", "B", "C", "D"]
+    out = []
+    for i in range(n):
+        out.append({field: random.choice(categories)})
+    return out

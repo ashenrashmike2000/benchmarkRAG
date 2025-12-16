@@ -2,18 +2,31 @@ import argparse
 import json
 import time
 from src.vectorstore import FaissVectorStore
-from src.data_loader import read_fvecs, read_ivecs, generate_metadata_for_corpus
+from src.benchmark_loader import read_fvecs, read_ivecs, generate_metadata
 from src.search import BenchmarkRunner
+from src.dataset_registry import discover_dataset
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--corpus", required=True)
-    parser.add_argument("--queries", required=True)
-    parser.add_argument("--gt", required=True)
+    parser.add_argument("--dataset", help="Dataset name (e.g., deep1m, sift1m)")
+    parser.add_argument("--corpus")
+    parser.add_argument("--queries")
+    parser.add_argument("--gt")
     parser.add_argument("--topk", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
+
+    if args.dataset:
+        paths = discover_dataset(args.dataset)
+        args.corpus = paths["corpus"]
+        args.queries = paths["queries"]
+        args.gt = paths["gt"]
+
+    if not args.corpus or not args.queries or not args.gt:
+        raise ValueError(
+            "You must provide either --dataset OR (--corpus, --queries, --gt)"
+        )
 
     print("Loading data...")
     corpus = read_fvecs(args.corpus)
@@ -23,7 +36,7 @@ def main():
     print("Building index...")
     t0 = time.time()
     store = FaissVectorStore(persist_dir="E:/faiss_store")
-    metadata = generate_metadata_for_corpus(len(corpus))
+    metadata = generate_metadata(len(corpus))
     store.load_corpus_vectors(corpus, metadata=metadata)
     index_build_time = time.time() - t0
 
