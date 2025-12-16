@@ -1,9 +1,7 @@
 import argparse
 import json
-import time
-import numpy as np
 
-from src.vectorstore import FaissVectorStore
+from src.vectorstore.faiss_store import FaissVectorStore
 from src.dataset_registry import discover_dataset
 from src.benchmark_loader import read_fvecs, read_ivecs
 from src.search import BenchmarkRunner
