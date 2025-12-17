@@ -10,7 +10,7 @@ from src.vectorstore.base import VectorStore
 
 
 class FaissVectorStore(VectorStore):
-    def __init__(self, persist_dir: str = "E:/faiss_store"):
+    def __init__(self, persist_dir: str = "./faiss_store"):
         self.persist_dir = persist_dir
         os.makedirs(self.persist_dir, exist_ok=True)
 
