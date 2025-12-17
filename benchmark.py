@@ -1,25 +1,44 @@
 import argparse
 import json
+import time
+import numpy as np
 
-from src.vectorstore.faiss_store import FaissVectorStore
 from src.dataset_registry import discover_dataset
-from src.benchmark_loader import read_fvecs, read_ivecs
-from src.search import BenchmarkRunner
-from src.metrics import recall_at_k, reciprocal_rank, success_at_k, ndcg_at_k
 from src.embedding import EmbeddingPipeline
+from src.metrics import (
+    recall_at_k,
+    reciprocal_rank,
+    success_at_k,
+    ndcg_at_k,
+)
 from src.msmarco_loader import (
     load_msmarco_corpus,
     load_msmarco_queries,
     load_msmarco_qrels,
 )
+from src.benchmark_loader import read_fvecs, read_ivecs
+from src.search import BenchmarkRunner
 
-# -------------------------------
-# MS MARCO evaluation
-# -------------------------------
-def run_msmarco(dataset, topk, workers):
-    from time import time
-    import numpy as np
+from src.vectorstore.faiss_store import FaissVectorStore
+from src.vectorstore.qdrant_store import QdrantVectorStore
 
+
+# -------------------------------------------------
+# Vector store factory
+# -------------------------------------------------
+def create_store(db: str, dataset_name: str):
+    if db == "faiss":
+        return FaissVectorStore(persist_dir="E:/faiss_store")
+    elif db == "qdrant":
+        return QdrantVectorStore(collection_name=f"{dataset_name}_vectors")
+    else:
+        raise ValueError(f"Unsupported vector database: {db}")
+
+
+# -------------------------------------------------
+# MS MARCO benchmark
+# -------------------------------------------------
+def run_msmarco(dataset, store, topk):
     corpus = load_msmarco_corpus(dataset["corpus"])
     queries = load_msmarco_queries(dataset["queries"])
     qrels = load_msmarco_qrels(dataset["qrels"])
@@ -30,35 +49,34 @@ def run_msmarco(dataset, topk, workers):
     corpus_texts = list(corpus.values())
 
     # ---------- Corpus embedding ----------
-    t0 = time()
-    corpus_vecs = embedder.embed_texts(corpus_texts)
-    corpus_embed_time = time() - t0
+    t0 = time.time()
+    corpus_vectors = embedder.embed_texts(corpus_texts)
+    corpus_embed_time = time.time() - t0
 
     # ---------- Index build ----------
-    store = FaissVectorStore(persist_dir="E:/faiss_store")
-    t0 = time()
-    store.load_corpus_vectors(corpus_vecs)
-    index_build_time = time() - t0
+    t0 = time.time()
+    store.load_corpus_vectors(corpus_vectors)
+    index_build_time = time.time() - t0
 
     # ---------- Query embedding ----------
     query_ids = list(queries.keys())
     query_texts = list(queries.values())
 
-    t0 = time()
-    query_vecs = embedder.embed_texts(query_texts)
-    query_embed_time = time() - t0
+    t0 = time.time()
+    query_vectors = embedder.embed_texts(query_texts)
+    query_embed_time = time.time() - t0
 
     # ---------- Evaluation ----------
     recalls_5, recalls_10, recalls_20 = [], [], []
     mrrs, successes, ndcgs = [], [], []
     latencies = []
 
-    t0 = time()
-    for qid, qvec in zip(query_ids, query_vecs):
-        pred_idx, latency = store.search(qvec, topk)
+    t0 = time.time()
+    for qid, qvec in zip(query_ids, query_vectors):
+        indices, latency = store.search(qvec, topk)
         latencies.append(latency)
 
-        pred_doc_ids = [corpus_ids[i] for i in pred_idx]
+        pred_doc_ids = [corpus_ids[i] for i in indices]
         gt = set(qrels.get(qid, []))
 
         recalls_5.append(recall_at_k(pred_doc_ids, gt, 5))
@@ -69,7 +87,7 @@ def run_msmarco(dataset, topk, workers):
         successes.append(success_at_k(pred_doc_ids, gt, 10))
         ndcgs.append(ndcg_at_k(pred_doc_ids, gt, 10))
 
-    total_query_time = time() - t0
+    total_query_time = time.time() - t0
     qps = len(query_ids) / total_query_time if total_query_time > 0 else 0.0
 
     return {
@@ -100,27 +118,37 @@ def run_msmarco(dataset, topk, workers):
         },
     }
 
-# -------------------------------
+
+# -------------------------------------------------
 # Main
-# -------------------------------
+# -------------------------------------------------
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--dataset", required=True)
+    parser.add_argument("--db", choices=["faiss", "qdrant"], default="faiss")
     parser.add_argument("--topk", type=int, default=10)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--out", required=True)
     args = parser.parse_args()
 
     dataset = discover_dataset(args.dataset)
-
     print(f"Detected dataset type: {dataset['type']}")
+    print(f"Using vector database: {args.db}")
 
+    store = create_store(args.db, args.dataset)
+
+    # ---------- ANN datasets ----------
     if dataset["type"] == "ann":
         corpus = read_fvecs(dataset["corpus"])
         queries = read_fvecs(dataset["queries"])
         gt = read_ivecs(dataset["gt"])
 
-        store = FaissVectorStore(persist_dir="E:/faiss_store")
+        # ---- Limit dataset size for Qdrant ----
+        if args.db == "qdrant":
+            max_vectors = 100_000  # Deep100K
+            corpus = corpus[:max_vectors]
+            gt = gt[:max_vectors]
+
         store.load_corpus_vectors(corpus)
 
         runner = BenchmarkRunner(store)
@@ -131,8 +159,9 @@ def main():
             workers=args.workers,
         )
 
+    # ---------- MS MARCO ----------
     elif dataset["type"] == "msmarco":
-        results = run_msmarco(dataset, args.topk, args.workers)
+        results = run_msmarco(dataset, store, args.topk)
 
     else:
         raise ValueError("Unsupported dataset type")

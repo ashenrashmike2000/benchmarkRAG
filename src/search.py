@@ -9,6 +9,7 @@ from src.metrics import (
     latency_percentiles,
 )
 
+
 class BenchmarkRunner:
     def __init__(self, store):
         self.store = store
@@ -22,18 +23,41 @@ class BenchmarkRunner:
 
         # ---- Main evaluation ----
         start = time.time()
-        D, I = self.store.index.search(queries, k)
-        total_time = time.time() - start
-        qps = len(queries) / total_time
 
-        for i in range(len(queries)):
-            pred = list(map(int, I[i]))
-            gt = set(map(int, groundtruth[i]))
+        if hasattr(self.store, "index"):
+            workers = 1
+            # ===== FAISS fast path (UNCHANGED behavior) =====
+            D, I = self.store.index.search(queries, k)
+            total_time = time.time() - start
+            qps = len(queries) / total_time
 
-            precisions.append(precision_at_k(pred, gt, k))
-            recalls.append(recall_at_k(pred, gt, k))
-            mrrs.append(reciprocal_rank(pred, gt))
-            ndcgs.append(ndcg_at_k(pred, gt, k))
+            for i in range(len(queries)):
+                pred = list(map(int, I[i]))
+                gt = set(map(int, groundtruth[i]))
+
+                precisions.append(precision_at_k(pred, gt, k))
+                recalls.append(recall_at_k(pred, gt, k))
+                mrrs.append(reciprocal_rank(pred, gt))
+                ndcgs.append(ndcg_at_k(pred, gt, k))
+
+        else:
+            # ===== Generic VectorStore path (Qdrant, Milvus, etc.) =====
+            total_time = 0.0
+
+            for i, q in enumerate(queries):
+                t0 = time.time()
+                pred, latency = self.store.search(q, k)
+                total_time += time.time() - t0
+
+                gt = set(map(int, groundtruth[i]))
+
+                precisions.append(precision_at_k(pred, gt, k))
+                recalls.append(recall_at_k(pred, gt, k))
+                mrrs.append(reciprocal_rank(pred, gt))
+                ndcgs.append(ndcg_at_k(pred, gt, k))
+                latencies.append(latency)
+
+            qps = len(queries) / total_time if total_time > 0 else 0.0
 
         # ---- Latency sampling ----
         for q in queries[:200]:
@@ -60,7 +84,7 @@ class BenchmarkRunner:
             "cold_start_latency": cold_latency,
             "throughput": {
                 "qps": qps,
-                "sustained_qps": qps,  # flat index baseline
+                "sustained_qps": qps,
             },
             "index": {
                 "size_vectors": self.store.get_index_size(),
