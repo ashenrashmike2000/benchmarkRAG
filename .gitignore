@@ -21,6 +21,7 @@ __pycache__/
 faiss_store/
 data/benchmark/
 results/
-
-.env
+.idea/
+*.iml
+dataset/
 
